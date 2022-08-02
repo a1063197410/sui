@@ -17,7 +17,7 @@ use sui_types::{
     },
     object::{MoveObject, Object, Owner, OBJECT_START_VERSION},
 };
-use test_utils::test_keys;
+use test_utils::test_account_keys;
 use tokio::sync::mpsc::channel;
 
 /// Fixture: a few test gas objects.
@@ -26,7 +26,7 @@ pub fn test_gas_objects() -> Vec<Object> {
         .map(|i| {
             let seed = format!("0x555555555555555{i}");
             let gas_object_id = ObjectID::from_hex_literal(&seed).unwrap();
-            let (sender, _) = test_keys().pop().unwrap();
+            let (sender, _) = test_account_keys().pop().unwrap();
             Object::with_id_owner_for_testing(gas_object_id, sender)
         })
         .collect()
@@ -43,7 +43,7 @@ pub fn test_shared_object() -> Object {
 
 /// Fixture: a few test certificates containing a shared object.
 pub async fn test_certificates(authority: &AuthorityState) -> Vec<CertifiedTransaction> {
-    let (sender, keypair) = test_keys().pop().unwrap();
+    let (sender, keypair) = test_account_keys().pop().unwrap();
 
     let mut certificates = Vec::new();
     let shared_object_id = test_shared_object().id();
@@ -105,6 +105,11 @@ async fn listen_to_sequenced_transaction() {
     // Set the shared object locks.
     state
         .handle_consensus_transaction(
+            // TODO [2533]: use this once integrating Narwhal reconfiguration
+            &narwhal_consensus::ConsensusOutput {
+                certificate: narwhal_types::Certificate::default(),
+                consensus_index: narwhal_types::SequenceNumber::default(),
+            },
             ExecutionIndices::default(),
             ConsensusTransaction::UserTransaction(certificate),
         )
@@ -119,8 +124,9 @@ async fn listen_to_sequenced_transaction() {
     );
 
     // Submit a sample consensus transaction.
-    let (sender, receiver) = oneshot::channel();
-    let message = ConsensusListenerMessage::New(serialized.clone(), sender);
+    let (waiter, signals) = ConsensusWaiter::new();
+
+    let message = ConsensusListenerMessage::New(serialized.clone(), signals);
     tx_sui_to_consensus.send(message).await.unwrap();
 
     // Notify the consensus listener that the transaction has been sequenced.
@@ -129,7 +135,7 @@ async fn listen_to_sequenced_transaction() {
     tx_consensus_to_sui.send(output).await.unwrap();
 
     // Ensure the caller get notified from the consensus listener.
-    assert!(receiver.await.unwrap().is_ok());
+    assert!(waiter.wait_for_result().await.is_ok());
 }
 
 #[tokio::test]
@@ -151,7 +157,6 @@ async fn submit_transaction_to_consensus() {
 
     // Make a new consensus submitter instance.
     let submitter = ConsensusAdapter::new(
-        state_guard.clone(),
         consensus_address.clone(),
         committee,
         tx_consensus_listener,
@@ -166,7 +171,6 @@ async fn submit_transaction_to_consensus() {
         while let Some(message) = rx_consensus_listener.recv().await {
             let (serialized, replier) = match message {
                 ConsensusListenerMessage::New(serialized, replier) => (serialized, replier),
-                message => panic!("Unexpected message {message:?}"),
             };
 
             let message =
@@ -179,6 +183,11 @@ async fn submit_transaction_to_consensus() {
             // Set the shared object locks.
             state_guard
                 .handle_consensus_transaction(
+                    // TODO [2533]: use this once integrating Narwhal reconfiguration
+                    &narwhal_consensus::ConsensusOutput {
+                        certificate: narwhal_types::Certificate::default(),
+                        consensus_index: narwhal_types::SequenceNumber::default(),
+                    },
                     ExecutionIndices::default(),
                     ConsensusTransaction::UserTransaction(certificate.clone()),
                 )
@@ -187,7 +196,7 @@ async fn submit_transaction_to_consensus() {
 
             // Reply to the submitter.
             let result = Ok(Vec::default());
-            replier.send(result).unwrap();
+            replier.0.send(result).unwrap();
         }
     });
 

@@ -37,10 +37,7 @@ pub async fn start_console(
 ) -> Result<(), anyhow::Error> {
     let app: Command = SuiClientCommands::command();
     writeln!(out, "{}", SUI.cyan().bold())?;
-    let mut version = app
-        .get_long_version()
-        .unwrap_or_else(|| app.get_version().unwrap_or("unknown"))
-        .to_owned();
+    let mut version = env!("CARGO_PKG_VERSION").to_owned();
     if let Some(git_rev) = std::option_env!("GIT_REVISION") {
         version.push('-');
         version.push_str(git_rev);
@@ -52,7 +49,7 @@ pub async fn start_console(
     writeln!(out)?;
 
     let mut shell = Shell::new(
-        "sui>-$ ".bold().green(),
+        "sui>-$ ",
         context,
         ClientCommandHandler,
         CommandStructure::from_clap(&install_shell_plugins(app)),

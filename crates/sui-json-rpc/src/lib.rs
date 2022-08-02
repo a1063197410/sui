@@ -1,11 +1,14 @@
 // Copyright (c) 2022, Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use jsonrpsee::http_server::{AccessControlBuilder, HttpServerBuilder, HttpServerHandle};
-use jsonrpsee::ws_server::{WsServerBuilder, WsServerHandle};
-use jsonrpsee_core::middleware::Middleware;
+use jsonrpsee_core::server::access_control::AccessControlBuilder;
 use jsonrpsee_core::server::rpc_module::RpcModule;
 
+use crate::http_server::{HttpServerBuilder, HttpServerHandle};
+use crate::ws_server::{WsServerBuilder, WsServerHandle};
+
+use jsonrpsee::types::Params;
+use jsonrpsee_core::middleware::{Headers, HttpMiddleware, MethodKind, WsMiddleware};
 use prometheus::{
     register_histogram_vec_with_registry, register_int_counter_vec_with_registry, HistogramVec,
     IntCounterVec,
@@ -16,6 +19,10 @@ use std::time::Instant;
 use sui_open_rpc::{Module, Project};
 use tracing::info;
 
+pub use jsonrpsee::http_server;
+pub use jsonrpsee::ws_server;
+
+pub mod api;
 pub mod bcs_api;
 pub mod event_api;
 pub mod gateway_api;
@@ -76,32 +83,27 @@ impl JsonRpcServerBuilder {
         use_websocket: bool,
         prometheus_registry: &prometheus::Registry,
     ) -> anyhow::Result<Self> {
-        let (ac_builder, allow_list) = match env::var("ACCESS_CONTROL_ALLOW_ORIGIN") {
+        let acl = match env::var("ACCESS_CONTROL_ALLOW_ORIGIN") {
             Ok(value) => {
                 let owned_list: Vec<String> = value
                     .split(',')
                     .into_iter()
                     .map(|s| s.into())
                     .collect::<Vec<_>>();
-                (
-                    AccessControlBuilder::default().set_allowed_origins(&owned_list)?,
-                    owned_list,
-                )
+                AccessControlBuilder::default().set_allowed_origins(&owned_list)?
             }
-            _ => (AccessControlBuilder::default(), vec![]),
-        };
+            _ => AccessControlBuilder::default(),
+        }
+        .build();
+        info!(?acl);
 
         let server_builder = if use_websocket {
-            let mut builder = WsServerBuilder::default()
-                .set_middleware(ApiMetrics::WebsocketMetrics(WebsocketMetrics {}));
-            if !allow_list.is_empty() {
-                info!("Setting ACCESS_CONTROL_ALLOW_ORIGIN to : {:?}", allow_list);
-                builder = builder.set_allowed_origins(allow_list)?;
-            }
-            ServerBuilder::WsBuilder(builder)
+            ServerBuilder::WsBuilder(
+                WsServerBuilder::default()
+                    .set_access_control(acl)
+                    .set_middleware(ApiMetrics::WebsocketMetrics(WebsocketMetrics {})),
+            )
         } else {
-            let acl = ac_builder.build();
-            info!(?acl);
             ServerBuilder::HttpBuilder(
                 HttpServerBuilder::default()
                     .set_access_control(acl)
@@ -195,12 +197,14 @@ impl JsonRpcMetrics {
 #[derive(Clone)]
 pub struct WebsocketMetrics {}
 
-impl Middleware for ApiMetrics {
+impl HttpMiddleware for ApiMetrics {
     type Instant = Instant;
 
-    fn on_request(&self) -> Instant {
+    fn on_request(&self, _remote_addr: SocketAddr, _headers: &Headers) -> Instant {
         Instant::now()
     }
+
+    fn on_call(&self, _method_name: &str, _params: Params, _kind: MethodKind) {}
 
     fn on_result(&self, name: &str, success: bool, started_at: Instant) {
         if let ApiMetrics::JsonRpcMetrics(JsonRpcMetrics {
@@ -219,6 +223,26 @@ impl Middleware for ApiMetrics {
             }
         }
     }
+
+    fn on_response(&self, _result: &str, _started_at: Self::Instant) {}
+}
+
+impl WsMiddleware for ApiMetrics {
+    type Instant = Instant;
+
+    fn on_connect(&self, _remote_addr: SocketAddr, _headers: &Headers) {}
+
+    fn on_request(&self) -> Self::Instant {
+        Instant::now()
+    }
+
+    fn on_call(&self, _method_name: &str, _params: Params, _kind: MethodKind) {}
+
+    fn on_result(&self, _method_name: &str, _success: bool, _started_at: Self::Instant) {}
+
+    fn on_response(&self, _result: &str, _started_at: Self::Instant) {}
+
+    fn on_disconnect(&self, _remote_addr: SocketAddr) {}
 }
 
 pub trait SuiRpcModule

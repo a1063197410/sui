@@ -31,6 +31,7 @@ export class VoidProvider extends Provider {
 
   async executeTransaction(
     _txnBytes: string,
+    _flag: string,
     _signature: string,
     _pubkey: string
   ): Promise<TransactionResponse> {
@@ -50,6 +51,10 @@ export class VoidProvider extends Provider {
 
   async getRecentTransactions(_count: number): Promise<GetTxnDigestsResponse> {
     throw this.newError('getRecentTransactions');
+  }
+
+  async syncAccountState(_address: string): Promise<any> {
+    throw this.newError('syncAccountState');
   }
 
   private newError(operation: string): Error {
