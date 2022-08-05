@@ -1046,7 +1046,7 @@ impl<S: Eq + Debug + Serialize + for<'de> Deserialize<'de>> SuiDataStore<S> {
             .iter()
             .map(|(id, version, _)| ((digest, *id), *version))
             .collect();
-        info!(?sequenced, "locking");
+        debug!(?sequenced, "Shared object locks sequenced from effects");
 
         let mut write_batch = self.tables.assigned_object_versions.batch();
         write_batch = write_batch.insert_batch(&self.tables.assigned_object_versions, sequenced)?;
@@ -1354,6 +1354,13 @@ impl<S: Eq + Debug + Serialize + for<'de> Deserialize<'de>> SuiDataStore<S> {
         Ok(())
     }
 
+    pub fn get_authenticated_epoch(
+        &self,
+        epoch_id: &EpochId,
+    ) -> SuiResult<Option<AuthenticatedEpoch>> {
+        Ok(self.tables.epochs.get(epoch_id)?)
+    }
+
     pub fn get_latest_authenticated_epoch(&self) -> AuthenticatedEpoch {
         self.tables
             .epochs
@@ -1458,7 +1465,7 @@ impl ObjectKey {
 
 impl From<ObjectRef> for ObjectKey {
     fn from(object_ref: ObjectRef) -> Self {
-        (&object_ref).into()
+        ObjectKey::from(&object_ref)
     }
 }
 

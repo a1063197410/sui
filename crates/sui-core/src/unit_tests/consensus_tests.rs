@@ -140,8 +140,8 @@ async fn listen_to_sequenced_transaction() {
 
 #[tokio::test]
 async fn submit_transaction_to_consensus() {
-    // TODO [issue #932]: Use a port allocator to avoid port conflicts.
-    let consensus_address: Multiaddr = "/dns/localhost/tcp/12456/http".parse().unwrap();
+    let port = sui_config::utils::get_available_port();
+    let consensus_address: Multiaddr = format!("/dns/localhost/tcp/{port}/http").parse().unwrap();
     let (tx_consensus_listener, mut rx_consensus_listener) = channel(1);
 
     // Initialize an authority with a (owned) gas object and a shared object; then
@@ -154,6 +154,7 @@ async fn submit_transaction_to_consensus() {
 
     let committee = state.clone_committee();
     let state_guard = Arc::new(state);
+    let metrics = ConsensusAdapterMetrics::new_test();
 
     // Make a new consensus submitter instance.
     let submitter = ConsensusAdapter::new(
@@ -161,6 +162,7 @@ async fn submit_transaction_to_consensus() {
         committee,
         tx_consensus_listener,
         /* max_delay */ Duration::from_millis(1_000),
+        metrics,
     );
 
     // Spawn a network listener to receive the transaction (emulating the consensus node).

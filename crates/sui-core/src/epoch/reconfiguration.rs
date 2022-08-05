@@ -13,10 +13,10 @@ use std::time::Duration;
 use sui_network::tonic;
 use sui_types::committee::Committee;
 use sui_types::crypto::AuthorityPublicKeyBytes;
-use sui_types::error::{SuiError, SuiResult};
+use sui_types::error::SuiResult;
 use sui_types::messages::SignedTransaction;
 use sui_types::sui_system_state::SuiSystemState;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info};
 use typed_store::Map;
 
 #[async_trait]
@@ -93,7 +93,7 @@ where
         };
 
         let sui_system_state = self.state.get_sui_system_state_object().await?;
-        let next_epoch = sui_system_state.epoch + 1;
+        let next_epoch = epoch + 1;
         let next_epoch_validators = &sui_system_state.validators.next_epoch_validators;
         let votes = next_epoch_validators
             .iter()
@@ -125,6 +125,7 @@ where
             ));
             self.net.store(new_net);
         }
+
         // TODO: Update all committee in all components safely,
         // potentially restart narwhal committee/consensus adapter,
         // all active processes, maybe batch service.
@@ -163,7 +164,7 @@ where
                 },
                 Err(err) => err,
             };
-            warn!(
+            debug!(
                 ?epoch,
                 "Error when processing advance epoch transaction: {:?}", err
             );
@@ -172,7 +173,11 @@ where
 
         // Resume the validator to start accepting transactions for the new epoch.
         self.state.unhalt_validator();
-        info!(?epoch, "Validator unhalted. Epoch change finished");
+        info!(?epoch, "Validator unhalted.");
+        info!(
+            "Epoch change finished. We are now at epoch {:?}",
+            next_epoch
+        );
         Ok(())
     }
 
@@ -191,28 +196,53 @@ where
         net_config.request_timeout = Some(Duration::from_secs(5));
         net_config.http2_keepalive_interval = Some(Duration::from_secs(5));
 
+        let cur_clients = self.net.load().authority_clients.clone();
+
         for validator in next_epoch_validators {
-            let address = Multiaddr::try_from(validator.net_address).map_err(|e| {
-                SuiError::GenericAuthorityError {
-                    error: e.to_string(),
+            let public_key_bytes = match AuthorityPublicKeyBytes::from_bytes(
+                &validator.pubkey_bytes,
+            ) {
+                Err(err) => {
+                    error!("Error parsing validator public key. Skip this validator in the committee: {:?}", err);
+                    continue;
                 }
-            })?; //TODO: handle what happens if a validator registers with a faulty address
+                Ok(result) => result,
+            };
+            // TODO: We only recreate network connection if this is a new validator.
+            // This is because creating a new network connection on the same address doesn't
+            // work. We may want to look into this and see why it doesn't work.
+            if let Some(existing_client) = cur_clients.get(&public_key_bytes) {
+                // TODO: Since we rely purely on the public key to decide whether to recreate
+                // the network, it means that validators won't be able to modify their network
+                // information without also using a new public key.
+                new_clients.insert(public_key_bytes, existing_client.authority_client().clone());
+                debug!(
+                    "Adding unchanged client to the new network: {}",
+                    public_key_bytes
+                );
+                continue;
+            }
 
-            let channel =
-                net_config
-                    .connect_lazy(&address)
-                    .map_err(|e| SuiError::GenericAuthorityError {
-                        error: e.to_string(),
-                    })?;
+            let address = match Multiaddr::try_from(validator.net_address) {
+                Err(err) => {
+                    error!("Error parsing validator network address. Skip this validator in the committee: {:?}", err);
+                    continue;
+                }
+                Ok(result) => result,
+            };
+
+            let channel = match net_config.connect_lazy(&address) {
+                Err(err) => {
+                    error!("Error connecting to client {} with address {:?}. Skip this validator in the committee: {:?}", public_key_bytes, address, err);
+                    continue;
+                }
+                Ok(result) => result,
+            };
             let client: A = A::recreate(channel);
-
-            let pub_key_raw: &[u8] = &validator.pubkey_bytes;
-            let public_key_bytes =
-                AuthorityPublicKeyBytes::from_bytes(pub_key_raw).map_err(|e| {
-                    SuiError::GenericAuthorityError {
-                        error: e.to_string(),
-                    }
-                })?;
+            debug!(
+                "New network client created for {} at {:?}",
+                public_key_bytes, address
+            );
             new_clients.insert(public_key_bytes, client);
         }
 
