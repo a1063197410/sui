@@ -168,7 +168,7 @@
       },
       {
         "label": "Talk with Sui",
-        "fileName": "build/comms/index",
+        "fileName": "build/comms",
         "title": "Talk with Sui",
         "items": [
           {
@@ -180,7 +180,7 @@
             "fileName": "build/sui-json"
           },
           {
-            "label": "See Sui JSON-RPC API reference",
+            "label": "See JSON-RPC API Reference",
             "link": "https://docs.sui.io/sui-jsonrpc",
             "external": true
           },

@@ -844,7 +844,7 @@ impl TryFrom<MoveModulePublish> for SuiMovePackage {
 pub struct SuiTransactionData {
     pub transactions: Vec<SuiTransactionKind>,
     pub sender: SuiAddress,
-    gas_payment: SuiObjectRef,
+    pub gas_payment: SuiObjectRef,
     pub gas_budget: u64,
 }
 
@@ -1442,6 +1442,12 @@ pub struct SuiObjectInfo {
     pub type_: String,
     pub owner: Owner,
     pub previous_transaction: TransactionDigest,
+}
+
+impl SuiObjectInfo {
+    pub fn to_object_ref(&self) -> ObjectRef {
+        (self.object_id, self.version, self.digest)
+    }
 }
 
 impl From<ObjectInfo> for SuiObjectInfo {
